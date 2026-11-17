@@ -1,152 +1,222 @@
 # fish-z
 
-**记住你常去的目录，用几个字母跳过去。**
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-fish-z 是 [BoringApp](https://github.com/BoringApp) 为 fish 编写的目录跳转插件，
-以 [agkozak/zsh-z v2.0.1](https://github.com/agkozak/zsh-z/tree/v2.0.1) 为移植基准。
-它沿用 zsh-z 的核心命令、frecency 排序思路和文本数据库格式，用 fish 的函数、
-事件和补全接口实现日常使用体验。
+**Remember the directories you use. Jump there with a few letters.**
 
-```fish
-z launch           # 跳到最匹配的常用目录
-z project fish     # 按顺序匹配多个关键词
-z -c src           # 只在当前目录下面搜索
-z -l               # 看看记住了哪些目录
-```
-
-## 功能
-
-- 按访问频率与最近访问时间综合排序，支持单独按频率或时间查找。
-- 默认先匹配大小写，找不到时再忽略大小写；也支持 `ignore` 和 `smart` 模式。
-- Tab 补全跟随搜索条件，并优先显示高分目录。
-- 支持精确删除历史、递归删除子目录记录，以及清理已经不存在的目录。
-- 可排除指定目录树，也可保留暂时离线的磁盘或挂载目录。
-- 提示符触发后台记录；写入通过目录锁串行化，再用临时文件原子替换数据库。
-- 数据文件权限为 `0600`，fish 私密模式不记录访问。
-
-运行时使用 fish 和 macOS/Linux 的基础命令，不需要 Python、Node.js 或额外编译。
-Python 只用于运行项目测试。
-
-## 安装
-
-目标环境为 fish 4.x，当前开发环境为 macOS、fish 4.9.3。
-
-从本地检出的项目加载，在 `~/.config/fish/config.fish` 中加入：
+fish-z is a directory jumping plugin for fish, maintained by
+[BoringApp](https://github.com/BoringApp) and ported from
+[agkozak/zsh-z v2.0.1](https://github.com/agkozak/zsh-z/tree/v2.0.1).
+It brings zsh-z's core commands, frecency ranking, and text database format to
+fish through native functions, events, and completions.
 
 ```fish
-source /path/to/fish-z/fish-z.plugin.fish
+z launch           # Jump to the best matching directory
+z project fish     # Match several terms in order
+z -c src           # Search only beneath the current directory
+z -l               # List the directories in your history
 ```
 
-将路径换成实际项目位置，然后打开新的 fish 终端。也可以在当前交互式 fish 中执行
-同一条 `source` 命令试用。
+## Features
 
-启用之前停用其他定义 `z` 的插件及其目录记录钩子，避免多个插件同时接管命令。
-本项目采用独立的 `FISHZ_*` 配置，不读取旧 fish 插件的 `Z_*` 变量，不迁移旧历史。
+- Rank directories by a combination of visit frequency and recency, or use either separately.
+- Prefer case-sensitive matches and fall back to case-insensitive matches; also support `ignore` and `smart` modes.
+- Tab completion follows your search options and prioritizes directories with higher scores.
+- Forget individual directories or entire subtrees, and prune directories that no longer exist.
+- Exclude directory trees or keep entries for temporarily unavailable drives and mounts.
+- Record visits in the background at each prompt, serialize writes with a directory lock, and replace the database atomically.
+- Keep the database private with `0600` permissions and skip recording in fish private mode.
 
-默认历史位置：
+The runtime uses fish and standard macOS/Linux utilities. No Python, Node.js,
+or compilation is required. Python is used only for the test suite.
+
+## Installation
+
+The target is fish 4.x. Development currently takes place on macOS with fish 4.9.3.
+Run the following commands in a fish terminal. Choose either manual installation or Fisher.
+
+Before enabling fish-z, disable any other plugin that defines `z`, including its
+directory recording hooks. fish-z uses its own `FISHZ_*` settings. It does not read
+the old fish plugin's `Z_*` variables or automatically import its history.
+
+### Manual installation (recommended)
+
+Clone the repository into a permanent location:
+
+```fish
+git clone https://github.com/BoringApp/fish-z.git ~/.local/share/fish-z/plugin
+```
+
+Add this line to `~/.config/fish/config.fish`:
+
+```fish
+source ~/.local/share/fish-z/plugin/fish-z.plugin.fish
+```
+
+Open a new fish terminal to start using the plugin. If no previous plugin is
+running, you can also run the `source` command in your current interactive fish
+session to load it immediately. You can keep the checkout elsewhere; adjust the
+source path accordingly.
+
+To update:
+
+```fish
+git -C ~/.local/share/fish-z/plugin pull --ff-only
+```
+
+Open a new terminal after updating to load the new functions.
+
+### Install with Fisher
+
+If you do not have [Fisher](https://github.com/jorgebucaran/fisher#installation), install it first:
+
+```fish
+curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+fisher install jorgebucaran/fisher
+```
+
+Install fish-z:
+
+```fish
+fisher install BoringApp/fish-z
+```
+
+Fisher installs the functions and startup configuration. No additional `source`
+line in `config.fish` is needed.
+
+To update:
+
+```fish
+fisher update BoringApp/fish-z
+```
+
+### Getting started
+
+By default, history is stored at:
 
 ```text
 $XDG_DATA_HOME/fish-z/data
 ```
 
-没有设置 `XDG_DATA_HOME` 时使用 `~/.local/share/fish-z/data`。刚安装时历史为空，
-正常进入几个工作目录后再使用 `z`。
+If `XDG_DATA_HOME` is unset, the location is `~/.local/share/fish-z/data`.
+A fresh installation starts with an empty history. Visit a few working
+directories with `cd`, then use `z`.
 
-## 命令
+## Commands
 
-| 命令 | 行为 |
+| Command | Behavior |
 | --- | --- |
-| `z` | 列出历史目录；不会回到 Home |
-| `z foo bar` | 按顺序匹配关键词，跳到最佳目录 |
-| `z -c foo` | 仅搜索当前目录的子目录 |
-| `z -e foo` | 输出目标路径，不跳转 |
-| `z -l foo` | 列出匹配目录和分数 |
-| `z -r foo` | 按访问频率选择 |
-| `z -t foo` | 按最近访问时间选择 |
-| `z --add /path/to/dir` | 手动记录一次访问 |
-| `z -x` | 删除当前目录的历史记录 |
-| `z -x /path/to/dir` | 删除指定目录的历史记录，即使目录已经不存在 |
-| `z -xR /path/to/dir` | 删除该目录及其整个子树的历史记录 |
-| `z -- -name` | 搜索以 `-` 开头的关键词 |
-| `z -h` | 显示帮助 |
+| `z` | List visited directories; do not change to Home |
+| `z foo bar` | Match terms in order and jump to the best directory |
+| `z -c foo` | Search only descendants of the current directory |
+| `z -e foo` | Print the best match without changing directory |
+| `z -l foo` | List matching directories and their scores |
+| `z -r foo` | Select by visit frequency |
+| `z -t foo` | Select by most recent visit |
+| `z --add /path/to/dir` | Record a visit explicitly |
+| `z -x` | Remove the current directory from history |
+| `z -x /path/to/dir` | Remove a specified directory from history, even if it no longer exists |
+| `z -xR /path/to/dir` | Remove the directory and its entire subtree from history |
+| `z -- -name` | Search for a term beginning with `-` |
+| `z -h` | Show help |
 
-删除只影响跳转历史。`z -xR /` 会先询问是否清空全部历史。
-`-r` 与 `-t` 不能同时使用。没有匹配时返回非零状态。
+Removal affects only jump history. `z -xR /` asks for confirmation before clearing
+the entire history. `-r` and `-t` cannot be combined. Searches return a nonzero
+status when no match is found.
 
-输入一个存在的绝对路径可以直接跳转；历史查找失败时也会尝试输入的相对目录。
-包含空格的目录作为 `--add` 或 `-x` 的参数时需要加引号。
+An existing absolute path can be used as a direct destination. If a history
+search fails, fish-z also tries the requested relative directory. Quote paths
+containing spaces when passing them to `--add` or `-x`.
 
-默认模式下，如果一个匹配目录是所有其他匹配目录的祖先，会优先跳到该目录。
-`FISHZ_UNCOMMON=1` 则选择最高分目录，并尝试去掉末尾不包含查询词的层级。
+By default, if one matching directory is an ancestor of every other match, fish-z
+prefers that directory. With `FISHZ_UNCOMMON=1`, it selects the highest-scoring
+directory and attempts to trim trailing components that do not contain the query.
 
-## 配置
+## Configuration
 
-在加载插件前设置，例如：
+For a manual installation, set options before sourcing the plugin:
 
 ```fish
 set -g FISHZ_CASE smart
 set -g FISHZ_EXCLUDE_DIRS /tmp /private/tmp
 set -g FISHZ_KEEP_DIRS /Volumes/Work
 set -g FISHZ_ECHO 1
-source /path/to/fish-z/fish-z.plugin.fish
+source ~/.local/share/fish-z/plugin/fish-z.plugin.fish
 ```
 
-| 变量 | 默认值 | 用途 |
+For Fisher installations, you can save settings from an interactive fish using `set -U`:
+
+```fish
+set -U FISHZ_CASE smart
+```
+
+Open a new terminal afterward. This makes settings such as `FISHZ_CMD` available
+before the plugin loads.
+
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `FISHZ_CMD` | `z` | 命令名称，修改后重新加载插件 |
-| `FISHZ_DATA` | 见上文 | 数据库的绝对路径 |
-| `FISHZ_CASE` | 空 | 默认大小写回退，或 `ignore` / `smart` |
-| `FISHZ_COMPLETION` | `frecent` | 按分数补全，或 `legacy` 按名称排序 |
-| `FISHZ_CD` | `builtin cd` | 自定义跳转命令，使用 fish 列表，例如 `set -g FISHZ_CD pushd` |
-| `FISHZ_ECHO` | `0` | 跳转后输出当前路径 |
-| `FISHZ_TILDE` | `0` | 输出时将 Home 前缀显示为 `~` |
-| `FISHZ_EXCLUDE_DIRS` | 空列表 | 不记录这些目录及其子目录 |
-| `FISHZ_KEEP_DIRS` | 空列表 | 即使暂时不存在也保留这些目录树 |
-| `FISHZ_LOCK_TIMEOUT` | `1` | 等待写锁的秒数，允许小数 |
-| `FISHZ_MAX_SCORE` | `9000` | 触发历史分数衰减的总分阈值 |
-| `FISHZ_NO_RESOLVE_SYMLINKS` | `0` | 设为 `1` 保留目录的逻辑路径 |
-| `FISHZ_TRAILING_SLASH` | `0` | 设为 `1` 后，`foo/` 也能匹配路径末尾的 `foo` |
-| `FISHZ_UNCOMMON` | `0` | 启用按查询词裁剪最高分目标的行为 |
+| `FISHZ_CMD` | `z` | Command name; reload the plugin after changing it |
+| `FISHZ_DATA` | See above | Absolute path to the database |
+| `FISHZ_CASE` | Empty | Default case fallback, or `ignore` / `smart` |
+| `FISHZ_COMPLETION` | `frecent` | Complete by score, or use `legacy` to sort by name |
+| `FISHZ_CD` | `builtin cd` | Custom directory-changing command as a fish list, such as `set -g FISHZ_CD pushd` |
+| `FISHZ_ECHO` | `0` | Print the current path after a jump |
+| `FISHZ_TILDE` | `0` | Display the Home prefix as `~` |
+| `FISHZ_EXCLUDE_DIRS` | Empty list | Do not record these directories or their descendants |
+| `FISHZ_KEEP_DIRS` | Empty list | Keep these directory trees even when temporarily unavailable |
+| `FISHZ_LOCK_TIMEOUT` | `1` | Seconds to wait for the write lock; fractions are allowed |
+| `FISHZ_MAX_SCORE` | `9000` | Total score threshold that triggers aging |
+| `FISHZ_NO_RESOLVE_SYMLINKS` | `0` | Set to `1` to preserve logical directory paths |
+| `FISHZ_TRAILING_SLASH` | `0` | Set to `1` so `foo/` can also match a final `foo` path component |
+| `FISHZ_UNCOMMON` | `0` | Trim the highest-scoring destination according to the query |
 
-目录列表使用绝对路径，按路径边界匹配：排除 `/work` 不会排除 `/workshop`。
+Directory lists use absolute paths and respect component boundaries: excluding
+`/work` does not exclude `/workshop`.
 
-## 写入和恢复
+## Writes and recovery
 
-每次写入在同一个目录锁内完成读取、修改和替换。读操作看到的是替换前或替换后的
-完整文件。进程正常退出或收到 `TERM`、`INT`、`HUP` 时，会清理临时文件和目录锁。
-写锁超时返回 `2`；自动记录静默跳过这次访问，手动 `z --add .` 可以查看错误。
+Each write reads, modifies, and replaces the database under the same directory
+lock. Readers see a complete file from before or after the replacement. Normal
+exit and the `TERM`, `INT`, and `HUP` signals clean up temporary files and the lock.
+A lock timeout returns `2`. Automatic recording silently skips that visit;
+running `z --add .` manually reports the error.
 
-fish 没有 zsh 的内置文件锁接口，因此这里使用目录锁。强制 `kill -9` 或断电可能
-留下 `<数据库路径>.lock.d`，其 `owner` 文件记录写进程 PID。确认该进程已经结束后，
-删除该锁目录中的 `owner` 文件，再用 `rmdir` 移除空锁目录。插件不会按文件年龄强抢锁。
+fish lacks zsh's built-in file-locking interface, so this port uses a directory
+lock. A forced `kill -9` or power loss may leave `<database-path>.lock.d` behind.
+Its `owner` file contains the writer's PID. After confirming that the process has
+ended, delete the `owner` file and use `rmdir` to remove the empty lock directory.
+The plugin does not take over a lock merely because it is old.
 
-数据库格式为 `绝对路径|频率|Unix 时间戳`；含 `|`、换行或回车的目录名无法记录。
-数据库文件可以是符号链接，写入会更新其目标并保留链接。
+The database format is `absolute path|frequency|Unix timestamp`. Directory names
+containing `|`, a newline, or a carriage return cannot be recorded. The database
+may be a symlink; writes update its target while preserving the link.
 
-## 与 zsh-z 的边界
+## Differences from zsh-z
 
-- 保留面向用户的主要命令行为，不模拟 zsh 的 ZLE、`zstyle` 或 shell 选项。
-- 查询支持 `*`、`?`，空白在查询中充当通配符；行为不受 `qmark-noglob` 开关影响。
-  不实现 zsh 的完整模式语法。
-- `-t` 的列表和补全统一把最近访问的目录排在前面；分数相同的结果按路径确定顺序。
-- 历史默认独立保存。虽然文件格式相同，但目录锁与 zsh-z 的文件锁不是同一种锁，
-  不要让两个插件同时写同一个数据库。
-- 暂不提供 zsh-z 的 `OWNER` / 提权代写配置，也不支持 Windows。
+- Preserve the main user-facing commands without emulating zsh's ZLE, `zstyle`, or shell options.
+- Queries support `*` and `?`, with whitespace acting as a wildcard, independently of `qmark-noglob`.
+  The full zsh pattern language is not implemented.
+- `-t` lists and completions both place the most recent visits first. Paths determine the order when scores tie.
+- History is stored separately by default. Although the file format is shared, the directory lock and zsh-z's file lock are different mechanisms.
+  Do not let both plugins write to the same database concurrently.
+- zsh-z's `OWNER` setting for writes on behalf of another user is not provided. Windows is not supported.
 
-## 开发与测试
+## Development and tests
 
 ```sh
 python3 -m unittest discover -s tests -v
 ```
 
-测试使用临时 Home 和数据库，不读取或修改日常 shell 的跳转历史。
-可选地设置 `ZSH_Z_REFERENCE=/path/to/zsh-z.plugin.zsh`，运行与上游的行为对照测试。
+Tests use a temporary Home and database. They do not read or modify your normal
+shell's jump history. Optionally set
+`ZSH_Z_REFERENCE=/path/to/zsh-z.plugin.zsh` to run behavioral comparisons with upstream.
 
-## 作者与来源
+## Authors and origins
 
-- fish 移植与项目维护：[BoringApp](https://github.com/BoringApp)
-- 上游实现：[Alexandros Kozak / agkozak/zsh-z](https://github.com/agkozak/zsh-z)
-- 原始工具：[rupa/z](https://github.com/rupa/z)
+- fish port and project maintenance: [BoringApp](https://github.com/BoringApp)
+- Upstream implementation: [Alexandros Kozak / agkozak/zsh-z](https://github.com/agkozak/zsh-z)
+- Original tool: [rupa/z](https://github.com/rupa/z)
 
-fish-z 是独立的 fish 移植项目，不是 zsh-z 官方发布的 fish 版本。
-项目采用 [MIT License](LICENSE)，保留上游版权声明，并加入 BoringApp 对移植工作的版权署名。
+fish-z is an independent fish port, not an official fish release of zsh-z.
+It is distributed under the [MIT License](LICENSE), retaining the upstream
+copyright notice and adding BoringApp's copyright for the port.
