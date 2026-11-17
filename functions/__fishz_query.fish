@@ -8,11 +8,13 @@ function __fishz_query --argument-names data mode method restrict
     set -l regex (string escape --style=regex -- "$pattern")
     set regex (string replace -a '\\*' '.*' -- "$regex")
     set regex (string replace -a '\\?' '.' -- "$regex")
+    set -l case_mode smart
+    test -n "$FISHZ_CASE"; and set case_mode "$FISHZ_CASE"
     set -l insensitive 0
     set -l smart 0
-    if test "$FISHZ_CASE" = ignore
+    if test "$case_mode" = ignore
         set insensitive 1
-    else if test "$FISHZ_CASE" = smart; or begin; test "$mode" = complete; and test "$FISHZ_COMPLETION" = legacy; end
+    else if test "$case_mode" = smart; or begin; test "$mode" = complete; and test "$FISHZ_COMPLETION" = legacy; end
         set smart 1
         if test "$pattern" = (string lower -- "$pattern")
             set insensitive 1
@@ -23,60 +25,75 @@ function __fishz_query --argument-names data mode method restrict
     or return 1
     set -l rows (__fishz_rows "$data")
     or return 1
-    set -l exact
-    set -l folded
-    set -l seen
-    for line in $rows
-        set -l parts (string split '|' -- "$line")
-        set -l candidate "$parts[1]"
-        contains -- "$candidate" $seen; and continue
-        set -a seen "$candidate"
-        __fishz_keep "$candidate"; or continue
-        if test "$restrict" = 1
-            __fishz_under "$candidate" "$PWD"; or continue
-            test "$candidate" = "$PWD"; and continue
-        end
-        set -l searchable "$candidate"
-        if test "$FISHZ_TRAILING_SLASH" = 1; and test "$candidate" != /
-            set searchable "$candidate/"
-        end
-        set -l bucket
-        if test "$insensitive" = 1
-            string match -irq -- "$regex" "$searchable"; or continue
-            set bucket folded
-        else if string match -rq -- "$regex" "$searchable"
-            set bucket exact
-        else if test "$smart" = 0; and string match -irq -- "$regex" "$searchable"
-            set bucket folded
+    set -q rows[1]; or return 1
+    if test "$restrict" = 1
+        set -l prefix (string escape --style=regex -- (path normalize -- "$PWD"))
+        if test "$PWD" = /
+            set rows (string match -r -- '^/[^|]+\|.*$' $rows)
         else
-            continue
+            set rows (string match -r -- "^$prefix/"'[^|]*\|.*$' $rows)
         end
-        set -l score
-        set -l key
-        switch "$method"
-            case rank
-                set score "$parts[2]"
-                set key (math "floor($score * 100)")
-            case time
-                set score (math "$parts[3] - $now")
-                set key "$parts[3]"
-            case '*'
-                # zsh-z 2.0.1 frecency; clamp future timestamps after clock changes.
-                set score (math "10000 * $parts[2] * 3.75 / (0.0001 * max(0, $now - $parts[3]) + 1.25)")
-                set key (math "floor($score * 100)")
-        end
-        if test "$mode" = list; and test "$score" = 0
-            continue
-        end
-        set -a $bucket "$key|$score|$candidate"
     end
-    set -l selected $exact
+    # Match whole batches before doing any per-directory filesystem/scoring work.
+    # The two final fields anchor the match inside the path, never its metadata.
+    if test "$FISHZ_TRAILING_SLASH" = 1
+        set rows (string replace -r '^(/[^|]+)\|' '$1/|' -- $rows)
+    end
+    set -l flags
+    if test "$insensitive" = 1; or test "$smart" = 0
+        set flags -i
+    end
+    set rows (string match -r $flags -- "^[^|]*(?:$regex)[^|]*\|[^|]*\|[^|]*\$" $rows)
+    if test "$FISHZ_TRAILING_SLASH" = 1
+        set rows (string replace -r '^(/[^|]+)/\|' '$1|' -- $rows)
+    end
+    set -q rows[1]; or return 1
+    # A synthetic final component lets the stable native sort deduplicate by the
+    # complete, literal path. The first duplicate still wins, including zero ranks.
+    set rows (string replace '|' '|/' -- $rows | path sort -u --key=dirname | string replace '|/' '|')
+    set -l scored (begin
+        set -l candidate
+        set -l frequency
+        set -l stamp
+        for line in $rows
+            string match -rq '^(?<candidate>[^|]+)\|(?<frequency>[^|]+)\|(?<stamp>[^|]+)$' -- "$line"
+            __fishz_keep "$candidate"; or continue
+            set -l searchable "$candidate"
+            if test "$FISHZ_TRAILING_SLASH" = 1; and test "$candidate" != /
+                set searchable "$candidate/"
+            end
+            set -l bucket f
+            if test "$insensitive" = 0; and string match -rq -- "$regex" "$searchable"
+                set bucket e
+            end
+            set -l score
+            set -l key
+            switch "$method"
+                case rank
+                    set score "$frequency"
+                    set key (math "floor($score * 100)")
+                case time
+                    set score (math "$stamp - $now")
+                    set key "$stamp"
+                case '*'
+                    # Preserve the original six-decimal score and integer sort key.
+                    set score (math "10000 * $frequency * 3.75 / (0.0001 * max(0, $now - $stamp) + 1.25)")
+                    set key (math "floor($score * 100)")
+            end
+            if test "$mode" = list; and test "$score" = 0
+                continue
+            end
+            printf '%s|%s|%s|%s\n' "$bucket" "$key" "$score" "$candidate"
+        end
+    end)
+    set -l selected (string match 'e|*' -- $scored)
     set -l match_flags
     if not set -q selected[1]
-        set selected $folded
+        set selected (string match 'f|*' -- $scored)
         set match_flags -i
     end
     set -q selected[1]; or return 1
+    set selected (string sub -s 3 -- $selected)
 
     # path sort is fish's in-process natural sort. Integer keys preserve decimals.
     set -l direction -r
@@ -84,13 +101,8 @@ function __fishz_query --argument-names data mode method restrict
         set direction
     end
     set selected (path sort $direction -- $selected)
-    set -l paths
-    set -l scores
-    for line in $selected
-        set -l parts (string split -m 2 '|' -- "$line")
-        set -a scores "$parts[2]"
-        set -a paths "$parts[3]"
-    end
+    set -l paths (string split -f 3 '|' -- $selected)
+    set -l scores (string split -f 2 '|' -- $selected)
     if test "$mode" = complete
         if test "$FISHZ_COMPLETION" = legacy
             path sort -- $paths

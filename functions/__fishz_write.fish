@@ -22,7 +22,9 @@ function __fishz_write
     set -l directory (path dirname -- "$data")
     # This worker owns its umask; the calling interactive shell is unaffected.
     umask 077
-    command mkdir -p -- "$directory"; or return 1
+    if not test -d "$directory"
+        command mkdir -p -- "$directory"; or return 1
+    end
     set -g __fishz_lock "$data.lock.d"
     set -g __fishz_held 0
     set -g __fishz_temp
@@ -69,26 +71,35 @@ function __fishz_write
     set -l times
     set -l total 0
     set -l removed 0
+    set -l size 0
+    set -l candidate
+    set -l frequency
+    set -l stamp
     for line in $rows
         test "$__fishz_cancel" -ne 0; and return $__fishz_cancel
-        set -l parts (string split '|' -- "$line")
+        string match -rq '^(?<candidate>[^|]+)\|(?<frequency>[^|]+)\|(?<stamp>[^|]+)$' -- "$line"
         if test "$action" != add
-            if test "$parts[1]" = "$target"; or begin; test "$action" = remove-tree; and __fishz_under "$parts[1]" "$target"; end
+            if test "$candidate" = "$target"; or begin; test "$action" = remove-tree; and __fishz_under "$candidate" "$target"; end
                 set removed 1
                 continue
             end
         else
-            __fishz_keep "$parts[1]"; or continue
-            test "$parts[2]" -ge 1; or continue
+            __fishz_keep "$candidate"; or continue
+            test "$frequency" -ge 1; or continue
         end
-        set -l i (contains -i -- "$parts[1]" $paths)
-        if test -z "$i"
-            set -a paths "$parts[1]"
-            set -a ranks "$parts[2]"
-            set -a times "$parts[3]"
+        # Function-scoped keys avoid rescanning previously seen paths. Variable
+        # escaping is reversible; paths are never evaluated as shell code.
+        set -l slot __fishz_index_(string escape --style=var -- "$candidate")
+        if not set -q -f "$slot"
+            set -a paths "$candidate"
+            set -a ranks "$frequency"
+            set -a times "$stamp"
+            set size (math "$size + 1")
+            set -f "$slot" "$size"
         else
-            set ranks[$i] "$parts[2]"
-            set times[$i] "$parts[3]"
+            set -l i $$slot
+            set ranks[$i] "$frequency"
+            set times[$i] "$stamp"
         end
     end
     if test "$action" = add
@@ -107,16 +118,16 @@ function __fishz_write
             set -a times "$now"
         end
         if test "$total" -gt "$_flag_max_score"
-            set -l aged
-            for rank in $ranks
-                set -a aged (math "$rank * 0.99")
-            end
-            set ranks $aged
+            set ranks (for rank in $ranks
+                math "$rank * 0.99"
+            end)
         end
     else if test "$removed" = 0
         return 1
     end
 
+    # mktemp creates an owner-only file, also constrained by this worker's 077
+    # umask. Replacing even a loosely permissioned database therefore yields 0600.
     set -g __fishz_temp (command mktemp "$data.XXXXXXXX")
     or return 1
     begin
@@ -130,7 +141,6 @@ function __fishz_write
     end >"$__fishz_temp"
     or return 1
     test "$__fishz_cancel" -ne 0; and return $__fishz_cancel
-    command chmod 600 "$__fishz_temp"; or return 1
     command mv -f -- "$__fishz_temp" "$data"
     or return 1
     set -e __fishz_temp

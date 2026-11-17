@@ -87,15 +87,15 @@ function __fishz_rows --argument-names data
 end
 
 function __fishz_common
-    set -l shortest "$argv[1]"
-    for candidate in $argv
-        if test (string length -- "$candidate") -lt (string length -- "$shortest")
-            set shortest "$candidate"
-        end
-    end
+    set -l lengths (string length -- $argv)
+    set -l minimum (math min (string join , -- $lengths))
+    set -l i (contains -i -- "$minimum" $lengths)
+    set -l shortest "$argv[$i]"
     test "$shortest" = /; and return 1
-    for candidate in $argv
-        __fishz_under "$candidate" "$shortest"; or return 1
+    set -l root (path normalize -- "$shortest")
+    if test "$root" != /
+        set -l prefix (string escape --style=regex -- "$root")
+        string match -rvq -- "^$prefix(?:/|\$)" $argv; and return 1
     end
     printf '%s\n' "$shortest"
 end

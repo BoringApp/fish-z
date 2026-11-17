@@ -72,7 +72,9 @@ class FishZTests(unittest.TestCase):
 
     def test_add_and_increment(self):
         path = self.directory("project")
-        for _ in range(3):
+        for visit in range(3):
+            if visit == 1:
+                self.data.chmod(0o644)
             self.assert_ok(self.z("--add", path))
         self.assertEqual(self.rows()[str(path)][0], 3)
         self.assertEqual(self.data.stat().st_mode & 0o777, 0o600)
@@ -100,12 +102,28 @@ class FishZTests(unittest.TestCase):
     def test_case_modes(self):
         a, b = self.directory("project"), self.directory("PROJECT")
         self.seed((a, 1, self.now), (b, 20, self.now))
-        for mode, query, expected in [("", "project", a), ("ignore", "project", b),
-                                      ("smart", "project", b), ("smart", "PROJECT", b)]:
-            r = self.z("-er", query, env={"FISHZ_CASE": mode})
-            self.assert_ok(r)
-            self.assertEqual(r.stdout.strip(), str(expected))
-        self.assertNotEqual(self.z("-e", "ProJECT", env={"FISHZ_CASE": "smart"}).returncode, 0)
+        for mode, query, expected in [(None, "project", b), ("", "project", b),
+                                      ("ignore", "project", b), ("ignore", "ProJECT", b),
+                                      ("smart", "project", b), ("smart", "PROJECT", b),
+                                      ("fallback", "project", a), ("fallback", "ProJECT", b)]:
+            with self.subTest(mode=mode, query=query):
+                env = {} if mode is None else {"FISHZ_CASE": mode}
+                r = self.z("-er", query, env=env)
+                self.assert_ok(r)
+                self.assertEqual(r.stdout.strip(), str(expected))
+        for mode in (None, "", "smart"):
+            env = {} if mode is None else {"FISHZ_CASE": mode}
+            self.assertNotEqual(self.z("-e", "ProJECT", env=env).returncode, 0)
+
+    def test_default_smart_case_jump_and_completion(self):
+        lower, upper = self.directory("workspace/odps"), self.directory("workspace/DPScope")
+        self.seed((lower, 18, self.now), (upper, 106, self.now))
+        result = self.run_fish('fishz dps; and pwd')
+        self.assert_ok(result)
+        self.assertEqual(result.stdout.strip(), str(upper))
+        self.assertEqual(self.z("--complete", "dps").stdout.splitlines(), [str(upper), str(lower)])
+        self.assertEqual(self.z("--complete", "DPS").stdout.splitlines(), [str(upper)])
+        self.assertEqual(self.z("-e", "dps", env={"FISHZ_CASE": "fallback"}).stdout.strip(), str(lower))
 
     def test_ordered_terms(self):
         a, b = self.directory("alpha/omega"), self.directory("omega/alpha")
@@ -199,6 +217,75 @@ class FishZTests(unittest.TestCase):
         self.assert_ok(self.z("--add", p))
         self.assertEqual(self.rows()[str(p)][0], 3)
         self.assertEqual(len(self.data.read_text().splitlines()), 1)
+
+    def test_duplicate_queries_keep_first_record_and_distinct_literal_paths(self):
+        a, b, upper = (self.directory(name) for name in ("item1", "item01", "ITEM1"))
+        trailing = str(a) + "/"
+        self.seed((a, 0, self.now), (b, 3, self.now), (upper, 4, self.now),
+                  (a, 100, self.now), (trailing, 2, self.now))
+        result = self.z("--complete", "-r")
+        self.assert_ok(result)
+        self.assertEqual(result.stdout.splitlines(), [str(upper), str(b), trailing, str(a)])
+        result = self.z("-lr")
+        self.assert_ok(result)
+        self.assertNotIn(str(a), [line.split(maxsplit=1)[1] for line in result.stdout.splitlines()])
+
+    def test_duplicate_writes_keep_last_valid_values_and_first_path_order(self):
+        a, b, c = (self.directory(name) for name in ("a-b", "a_2D_b", "中文 [x]"))
+        self.seed((a, 2, self.now - 10), (b, 3, self.now), (a, 7, self.now),
+                  (c, 4, self.now), (b, .5, self.now))
+        self.assert_ok(self.z("--add", a))
+        self.assertEqual([line.split("|")[0] for line in self.data.read_text().splitlines()],
+                         [str(a), str(b), str(c)])
+        self.assertEqual(self.rows()[str(a)][0], 8)
+        self.assertEqual(self.rows()[str(b)][0], 3)
+        # Removal does not prune low ranks; the last duplicate still wins there.
+        self.seed((a, 2, self.now), (b, 3, self.now), (b, .5, self.now))
+        self.assert_ok(self.z("-x", a))
+        self.assertEqual(self.rows()[str(b)][0], .5)
+
+    def test_case_fallback_after_directory_and_zero_score_filters(self):
+        missing, upper = self.home / "offline/project", self.directory("online/PROJECT")
+        env = {"FISHZ_CASE": "fallback"}
+        self.seed((missing, 1, self.now), (upper, 3, self.now))
+        self.assertEqual(self.z("-er", "project", env=env).stdout.strip(), str(upper))
+        self.assertEqual(self.z("-er", "project", env=env | {"FISHZ_KEEP_DIRS": str(missing)}).stdout.strip(), str(missing))
+        missing.mkdir(parents=True)
+        self.seed((missing, 0, self.now), (upper, 3, self.now))
+        result = self.z("-lr", "project", env=env)
+        self.assert_ok(result)
+        self.assertEqual(result.stdout.split(maxsplit=1)[1].strip(), str(upper))
+        self.assertEqual(self.z("-er", "project", env=env).stdout.strip(), str(missing))
+
+    def test_batch_matching_never_searches_rank_or_timestamp(self):
+        path = self.directory("project")
+        self.seed((path, 9876543210, 9876543210))
+        for query in ("9876543210", "project*9876543210", "project|*"):
+            with self.subTest(query=query):
+                result = self.z("-e", query)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stderr, "")
+
+    def test_subtree_filter_preserves_trailing_slash_records(self):
+        root = self.directory("work [x]")
+        child = self.directory("work [x]/child")
+        outside = self.directory("work [x]shop/child")
+        trailing = str(root) + "/"
+        self.seed((root, 100, self.now), (trailing, 3, self.now),
+                  (child, 2, self.now), (outside, 200, self.now))
+        result = self.z("--complete", "-rc", cwd=root)
+        self.assert_ok(result)
+        self.assertEqual(result.stdout.splitlines(), [trailing, str(child)])
+
+    def test_fractional_score_sort_keys_and_ties(self):
+        paths = [self.directory(name) for name in ("item1", "item2", "item10", "ITEM")]
+        self.seed(*[(path, rank, self.now) for path, rank in
+                    zip(paths, ("0.29", "0.2899999", "0.2800001", "0.28"))])
+        # Preserve floor(rank * 100), including its floating-point boundary,
+        # followed by the existing natural ordering of score and path ties.
+        result = self.z("--complete", "-r")
+        self.assert_ok(result)
+        self.assertEqual(result.stdout.splitlines(), [str(paths[i]) for i in (1, 2, 0, 3)])
 
     def test_aging(self):
         a, b = self.directory("one"), self.directory("two")
@@ -354,13 +441,14 @@ class FishZTests(unittest.TestCase):
         a, b, c = self.directory("code/alpha"), self.directory("code/beta"), self.directory("CODE/gamma")
         self.seed((a, 10, self.now - 86400), (b, 2, self.now), (c, 100, self.now - 999999))
         for args in [["-e", "code"], ["-er", "code"], ["-et", "code"], ["-e", "CODE"], ["-e", "code", "beta"]]:
-            for mode in ["", "ignore", "smart"]:
+            for mode, upstream_mode in [(None, "smart"), ("", "smart"), ("ignore", "ignore"),
+                                        ("smart", "smart"), ("fallback", "")]:
                 with self.subTest(args=args, mode=mode):
-                    env = self.env | {"ZSHZ_DATA": str(self.data), "ZSHZ_CASE": mode}
+                    env = self.env | {"ZSHZ_DATA": str(self.data), "ZSHZ_CASE": upstream_mode}
                     reference = subprocess.run(["zsh", "-f", "-c", 'source "$1"; shift; zshz "$@"',
                                                 "ref", REFERENCE, *args], env=env, cwd=self.home,
                                                text=True, capture_output=True, timeout=10)
-                    actual = self.z(*args, env={"FISHZ_CASE": mode})
+                    actual = self.z(*args, env={} if mode is None else {"FISHZ_CASE": mode})
                     self.assertEqual(actual.stdout, reference.stdout, reference.stderr)
                     self.assertEqual(actual.returncode, reference.returncode)
 
@@ -370,7 +458,7 @@ class FishZTests(unittest.TestCase):
         self.seed((path, 20, self.now))
         for query in [["code"], ["foo", "bar"], ["co*bar"], ["CODE"], ["co?e"]]:
             with self.subTest(query=query):
-                env = self.env | {"ZSHZ_DATA": str(self.data), "ZSHZ_UNCOMMON": "1"}
+                env = self.env | {"ZSHZ_DATA": str(self.data), "ZSHZ_UNCOMMON": "1", "ZSHZ_CASE": "smart"}
                 reference = subprocess.run(["zsh", "-f", "-c", 'source "$1"; shift; zshz -e "$@"',
                                             "ref", REFERENCE, *query], env=env, cwd=self.home,
                                            text=True, capture_output=True, timeout=10)

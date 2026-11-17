@@ -26,6 +26,9 @@ support both a manual checkout and Fisher's copied directory layout.
 ## Behavior to preserve
 
 - Use `FISHZ_*` settings. There is no compatibility layer for the old fish plugin's `Z_*` settings.
+- Unset or empty `FISHZ_CASE` defaults to `smart`: lowercase queries ignore case;
+  uppercase queries match case exactly. `ignore` always ignores case; `fallback`
+  preserves upstream's case-sensitive-first behavior. Match upstream test modes explicitly.
 - Bare `z` lists history; `-c` restricts searches to descendants, not database cleanup.
 - Treat `-r` and `-t` as mutually exclusive. Stop on invalid arguments.
 - Listing, echoing, and completion must not change directories or write history.
