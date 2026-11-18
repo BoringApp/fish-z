@@ -95,14 +95,38 @@ function __fishz_query --argument-names data mode method restrict
     set -q selected[1]; or return 1
     set selected (string sub -s 3 -- $selected)
 
+    # Rank the final nonempty term against the destination's basename. A term
+    # containing slashes uses its last path component; the full ordered query
+    # above still decides which paths qualify. Wildcards cannot cross a slash
+    # when grading a basename, and trailing slashes do not change its name.
+    set -l name_pattern ''
+    for term in $terms
+        test -n "$term"; and set name_pattern "$term"
+    end
+    set name_pattern (string trim -r -c / -- "$name_pattern")
+    set name_pattern (string replace -r '^.*/' '' -- "$name_pattern")
+    set name_pattern (string replace -ar '\s' '*' -- "$name_pattern")
+    set selected (string replace -r '^' '1|' -- $selected)
+    if test -n "$name_pattern"
+        set -l name_regex (string escape --style=regex -- "$name_pattern")
+        set name_regex (string replace -a '\\*' '[^/]*' -- "$name_regex")
+        set name_regex (string replace -a '\\?' '[^/]' -- "$name_regex")
+        # Upgrade path-only (1) to substring (2), prefix (3), then exact (4).
+        # Batch replacements add the primary sort key without per-row subprocesses.
+        set -l field '^[1-4]\|(?=[^|]*\|[^|]*\|.*/'
+        set selected (string replace -r $match_flags -- "$field"'[^/]*'"(?:$name_regex)"'[^/]*/*$)' '2|' $selected)
+        set selected (string replace -r $match_flags -- "$field(?:$name_regex)"'[^/]*/*$)' '3|' $selected)
+        set selected (string replace -r $match_flags -- "$field(?:$name_regex)"'/*$)' '4|' $selected)
+    end
+
     # path sort is fish's in-process natural sort. Integer keys preserve decimals.
     set -l direction -r
     if test "$mode" = list; and test "$method" != time
         set direction
     end
     set selected (path sort $direction -- $selected)
-    set -l paths (string split -f 3 '|' -- $selected)
-    set -l scores (string split -f 2 '|' -- $selected)
+    set -l paths (string split -f 4 '|' -- $selected)
+    set -l scores (string split -f 3 '|' -- $selected)
     if test "$mode" = complete
         if test "$FISHZ_COMPLETION" = legacy
             path sort -- $paths
@@ -111,8 +135,8 @@ function __fishz_query --argument-names data mode method restrict
         end
         return 0
     end
-    set -l common (__fishz_common $paths)
     if test "$mode" = list
+        set -l common (__fishz_common $paths)
         if set -q common[1]; and test (count $paths) -gt 1
             printf '%-10s %s\n' common: (__fishz_display "$common")
         end
@@ -139,8 +163,6 @@ function __fishz_query --argument-names data mode method restrict
             set target "$parent"
             set parent (path dirname -- "$target")
         end
-    else if set -q common[1]
-        set target "$common"
     end
     printf '%s\n' "$target"
 end

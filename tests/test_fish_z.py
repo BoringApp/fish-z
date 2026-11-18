@@ -130,13 +130,114 @@ class FishZTests(unittest.TestCase):
         self.seed((a, 1, self.now), (b, 100, self.now))
         self.assertEqual(self.z("-e", "alpha", "omega").stdout.strip(), str(a))
 
-    def test_common_root_and_component_boundaries(self):
+    def test_exact_name_precedes_descendants_and_longer_names(self):
         a, b = self.directory("code"), self.directory("code/child")
         self.seed((a, 1, self.now), (b, 30, self.now))
         self.assertEqual(self.z("-er", "code").stdout.strip(), str(a))
         c = self.directory("codebase")
         self.seed((a, 1, self.now), (c, 30, self.now))
-        self.assertEqual(self.z("-er", "code").stdout.strip(), str(c))
+        self.assertEqual(self.z("-er", "code").stdout.strip(), str(a))
+
+    def test_name_priority_overrides_frequency_and_recency(self):
+        exact = self.directory("exact/dps")
+        prefix = self.directory("prefix/DPScope")
+        substring = self.directory("substring/odps")
+        ancestor = self.directory("ancestor/dps/scripts")
+        paths = [exact, prefix, substring, ancestor]
+        rows = [(path, 10 ** i, self.now - (3 - i) * 86400)
+                for i, path in enumerate(paths)]
+        for start in range(len(paths)):
+            with self.subTest(best=paths[start].name):
+                self.seed(*rows[start:])
+                before = self.data.read_bytes()
+                for options in ("-e", "-er", "-et"):
+                    result = self.z(options, "dps")
+                    self.assert_ok(result)
+                    self.assertEqual(result.stdout.strip(), str(paths[start]))
+                for options in ([], ["-r"], ["-t"]):
+                    result = self.z("--complete", *options, "dps")
+                    self.assert_ok(result)
+                    self.assertEqual(result.stdout.splitlines(), list(map(str, paths[start:])))
+                for options, expected in [("-lr", list(reversed(paths[start:]))),
+                                          ("-lt", paths[start:])]:
+                    result = self.z(options, "dps")
+                    self.assert_ok(result)
+                    self.assertEqual([line.split(maxsplit=1)[1] for line in result.stdout.splitlines()],
+                                     list(map(str, expected)))
+                self.assertEqual(self.data.read_bytes(), before)
+
+    def test_recent_substring_does_not_beat_an_older_prefix(self):
+        lower, upper = self.directory("workspace/odps"), self.directory("workspace/DPScope")
+        self.seed((lower, 32, self.now), (upper, 107, self.now - 20 * 3600))
+        result = self.run_fish('fishz dps; and pwd')
+        self.assert_ok(result)
+        self.assertEqual(result.stdout.strip(), str(upper))
+        result = self.run_fish("complete -C 'z dps'", interactive=True)
+        self.assert_ok(result)
+        self.assertEqual([line.split("\t")[0] for line in result.stdout.splitlines()],
+                         [str(upper), str(lower)])
+
+    def test_same_name_priority_uses_scores_without_ancestor_override(self):
+        parent = self.directory("DPScope")
+        child = self.directory("DPScope/DPS-other")
+        self.seed((parent, 100, self.now - 864000), (child, 10, self.now))
+        for options, expected in [("-er", parent), ("-et", child), ("-e", child)]:
+            result = self.z(options, "dps")
+            self.assert_ok(result)
+            self.assertEqual(result.stdout.strip(), str(expected))
+        exact = self.directory("DPScope/dps")
+        self.seed((parent, 10000, self.now), (exact, 1, self.now - 86400))
+        self.assertEqual(self.z("-e", "dps").stdout.strip(), str(exact))
+
+    def test_final_term_grades_names_after_ordered_path_matching(self):
+        exact, prefix, substring, ancestor = (self.directory(name) for name in
+            ("work/dps", "work/DPScope", "work/odps", "work/dps/scripts"))
+        outside = self.directory("elsewhere/dps")
+        paths = [exact, prefix, substring, ancestor]
+        self.seed(*[(path, 10 ** i, self.now) for i, path in enumerate(paths)],
+                  (outside, 10000, self.now))
+        for terms in [("work", "dps"), ("work", "dps", "")]:
+            result = self.z("--complete", *terms)
+            self.assert_ok(result)
+            self.assertEqual(result.stdout.splitlines(), list(map(str, paths)))
+        self.assertEqual(self.z("-e", "work", "DPS").stdout.strip(), str(prefix))
+        # Slash-containing terms grade their final component while still
+        # requiring the entire path expression to match.
+        self.assertEqual(self.z("--complete", "work/dps").stdout.splitlines(),
+                         [str(exact), str(prefix), str(ancestor)])
+
+    def test_name_priority_handles_literal_characters_and_wildcards(self):
+        for name in ("a.[b]", "中文 目录", r"back\slash", "a ($cash)"):
+            with self.subTest(name=name):
+                paths = [self.directory("literal/" + part) for part in
+                         (name, name + "-more", "other-" + name, name + "/child")]
+                self.seed(*[(path, 10 ** i, self.now) for i, path in enumerate(paths)])
+                result = self.z("--complete", name)
+                self.assert_ok(result)
+                self.assertEqual(result.stdout.splitlines(), list(map(str, paths)))
+        exact, prefix, substring, ancestor = (self.directory(name) for name in
+            ("glob/dps", "glob/DPScope", "glob/odps", "glob/dps/scripts"))
+        paths = [exact, prefix, substring, ancestor]
+        self.seed(*[(path, 10 ** i, self.now) for i, path in enumerate(paths)])
+        self.assertEqual(self.z("--complete", "d?s").stdout.splitlines(), list(map(str, paths)))
+        self.assertEqual(self.z("--complete", "*dps").stdout.splitlines(),
+                         [str(substring), str(exact), str(prefix), str(ancestor)])
+
+    def test_name_priority_keeps_directory_filters_and_trailing_slashes(self):
+        root = self.directory("work")
+        prefix = self.directory("work/DPScope")
+        missing = self.home / "work/dps"
+        outside = self.directory("elsewhere/dps")
+        self.seed((prefix, 1, self.now), (missing, 100, self.now), (outside, 1000, self.now))
+        self.assertEqual(self.z("-ec", "dps", cwd=root).stdout.strip(), str(prefix))
+        self.assertEqual(self.z("-ec", "dps", cwd=root,
+                               env={"FISHZ_KEEP_DIRS": str(missing)}).stdout.strip(), str(missing))
+        missing.mkdir()
+        child = self.directory("work/dps/child")
+        self.seed((str(missing) + "/", 1, self.now), (child, 100, self.now))
+        result = self.z("--complete", "dps/", env={"FISHZ_TRAILING_SLASH": "1"})
+        self.assert_ok(result)
+        self.assertEqual(result.stdout.splitlines(), [str(missing) + "/", str(child)])
 
     def test_uncommon_keeps_deepest_occurrence(self):
         path = self.directory("code/foo/code/bar")

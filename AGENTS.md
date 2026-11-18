@@ -29,6 +29,11 @@ support both a manual checkout and Fisher's copied directory layout.
 - Unset or empty `FISHZ_CASE` defaults to `smart`: lowercase queries ignore case;
   uppercase queries match case exactly. `ignore` always ignores case; `fallback`
   preserves upstream's case-sensitive-first behavior. Match upstream test modes explicitly.
+- After case filtering, rank matches by basename: exact, prefix, substring, then
+  parent-path-only. The final nonempty query term (or its last path component)
+  determines the level. Apply frecency, `-r`, or `-t` scores only within a level.
+  Common ancestors must not override the chosen destination. Default completion
+  follows the same ranking; explicit `legacy` completion remains alphabetical.
 - Bare `z` lists history; `-c` restricts searches to descendants, not database cleanup.
 - Treat `-r` and `-t` as mutually exclusive. Stop on invalid arguments.
 - Listing, echoing, and completion must not change directories or write history.

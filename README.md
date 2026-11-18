@@ -55,6 +55,8 @@ z -l foo       # List matches and their scores
 
 Press **Tab** to complete matching directories. Searches use smart case:
 lowercase queries ignore case; queries containing uppercase letters match case exactly.
+Directory names rank by exact match, prefix, then substring; matches only in parent
+paths come last. Visit frequency and recency decide the order within each group.
 
 Run `z -h` for more commands. Advanced options are in the [reference](docs/reference.md).
 
@@ -66,9 +68,9 @@ three calls in an already running shell; shell startup is excluded.
 
 | Operation | fish-z | zsh-z |
 | --- | ---: | ---: |
-| Query matching one directory | 15.77 ms | 40.45 ms |
-| Query matching all directories | 104.89 ms | 43.54 ms |
-| Generate all completion candidates | 107.10 ms | 51.60 ms |
+| Query matching one directory | 16.76 ms | 42.59 ms |
+| Query matching all directories | 126.85 ms | 47.85 ms |
+| Generate all completion candidates | 120.13 ms | 56.93 ms |
 
 [Benchmark script and instructions](tests/benchmark_fish_z.py).
 

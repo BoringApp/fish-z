@@ -16,8 +16,8 @@ History is stored at `$XDG_DATA_HOME/fish-z/data`, falling back to
 | `z -c foo` | Search only descendants of the current directory |
 | `z -e foo` | Print the best match without changing directory |
 | `z -l foo` | List matching directories and their scores |
-| `z -r foo` | Select by visit frequency |
-| `z -t foo` | Select by most recent visit |
+| `z -r foo` | Rank by visit frequency within each match level |
+| `z -t foo` | Rank by most recent visit within each match level |
 | `z --add /path/to/dir` | Record a visit explicitly |
 | `z -x` | Remove the current directory from history |
 | `z -x /path/to/dir` | Remove a specified directory from history, even if it no longer exists |
@@ -33,9 +33,20 @@ An existing absolute path can be used as a direct destination. If a history
 search fails, fish-z also tries the requested relative directory. Quote paths
 containing spaces when passing them to `--add` or `-x`.
 
-By default, if one matching directory is an ancestor of every other match, fish-z
-prefers that directory. With `FISHZ_UNCOMMON=1`, it selects the highest-scoring
-directory and attempts to trim trailing components that do not contain the query.
+Matches rank by destination name: exact match, prefix, substring, then matches
+only in parent paths. Frequency and recency scores break ties within each level;
+`-r` or `-t` selects just one of those scores. An ancestor does not override this order.
+
+Multiple terms must still match the full path in order. The final nonempty term
+determines the destination-name match level; for a term containing slashes, its
+last path component is used. `*` and `?` work within the name too. Trailing slashes
+do not change a stored directory's name; `FISHZ_TRAILING_SLASH` still controls
+whether a query ending in `/` matches the final directory itself.
+
+Jumping and default completion put the best match first. `-l` and `-lr` display
+the best matches last; `-lt` displays them first. The listing's `common:` line is
+informational. With `FISHZ_UNCOMMON=1`, the selected destination is then trimmed
+to remove trailing components that do not contain the query.
 
 ## Configuration
 
@@ -63,7 +74,7 @@ before the plugin loads.
 | `FISHZ_CMD` | `z` | Command name; reload the plugin after changing it |
 | `FISHZ_DATA` | See above | Absolute path to the database |
 | `FISHZ_CASE` | `smart` | Case matching: `smart`, `ignore`, or `fallback` |
-| `FISHZ_COMPLETION` | `frecent` | Complete by score, or use `legacy` to sort by name |
+| `FISHZ_COMPLETION` | `frecent` | Complete by match level and score, or use `legacy` to sort alphabetically |
 | `FISHZ_CD` | `builtin cd` | Custom directory-changing command as a fish list, such as `set -g FISHZ_CD pushd` |
 | `FISHZ_ECHO` | `0` | Print the current path after a jump |
 | `FISHZ_TILDE` | `0` | Display the Home prefix as `~` |
@@ -73,7 +84,7 @@ before the plugin loads.
 | `FISHZ_MAX_SCORE` | `9000` | Total score threshold that triggers aging |
 | `FISHZ_NO_RESOLVE_SYMLINKS` | `0` | Set to `1` to preserve logical directory paths |
 | `FISHZ_TRAILING_SLASH` | `0` | Set to `1` so `foo/` can also match a final `foo` path component |
-| `FISHZ_UNCOMMON` | `0` | Trim the highest-scoring destination according to the query |
+| `FISHZ_UNCOMMON` | `0` | Trim the selected destination according to the query |
 
 `smart` ignores case for lowercase queries and matches case exactly when a query
 contains uppercase letters. `ignore` always ignores case. `fallback` preserves
@@ -104,10 +115,13 @@ may be a symlink; writes update its target while preserving the link.
 ## Differences from zsh-z
 
 - Smart case is the default. Set `FISHZ_CASE=fallback` for zsh-z's default case preference.
+- Destination-name match levels take priority over scores. The common-ancestor
+  heuristic does not override the selected destination.
 - Preserve the main user-facing commands without emulating zsh's ZLE, `zstyle`, or shell options.
 - Queries support `*` and `?`, with whitespace acting as a wildcard, independently of `qmark-noglob`.
   The full zsh pattern language is not implemented.
-- `-t` lists and completions both place the most recent visits first. Paths determine the order when scores tie.
+- Within a match level, `-t` lists and completions place the most recent visits first.
+  Paths determine the order when scores tie.
 - History is stored separately by default. Although the file format is shared, the directory lock and zsh-z's file lock are different mechanisms.
   Do not let both plugins write to the same database concurrently.
 - zsh-z's `OWNER` setting for writes on behalf of another user is not provided. Windows is not supported.
